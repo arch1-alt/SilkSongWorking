@@ -1,213 +1,176 @@
 <!DOCTYPE html>
 <html lang="en-us">
 <head>
-<base href="https://truffled.lol/games/silk/">
-<meta charset="utf-8">
-<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-<title>Unity Web Player | Hollow Knight SilkSong</title>
-<link rel="shortcut icon" href="TemplateData/favicon.ico">
-<link rel="stylesheet" href="TemplateData/style.css">
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unity Web Player | Hollow Knight SilkSong</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #000; width: 100%; height: 100%; overflow: hidden; }
+    #loading-text { color: white; font: 24px Arial, sans-serif; text-align: center; padding: 20px; }
+    #unity-container { width: 100%; height: calc(100% - 70px); display: flex; justify-content: center; align-items: center; }
+    #unity-canvas { width: min(100vw, 960px); height: min(62.5vw, 600px); max-width: 960px; max-height: 600px; background: #000; }
+    #unity-loading-bar { width: min(80vw, 600px); position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; }
+    #unity-progress-bar-empty { width: 100%; height: 12px; background: #333; }
+    #unity-progress-bar-full { width: 0%; height: 100%; background: #fff; }
+    #unity-warning { position: absolute; left: 0; right: 0; top: 0; z-index: 10; }
+  </style>
+  <script src="https://truffled.lol/games/silk/jszip.js"></script>
 </head>
 <body>
-<div id="loading-text" style="color: white; font-size: 48px; font-family: cursive; text-align: center; margin-top: 20px;"> LOADING...</div>
-<div id="unity-container">
-<canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
-<div id="unity-loading-bar">
-<div id="unity-logo"></div>
-<div id="unity-progress-bar-empty">
-<div id="unity-progress-bar-full"></div>
-</div>
-</div>
-<div id="unity-warning"> </div>
-</div>
+  <div id="loading-text">LOADING...</div>
+  <div id="unity-container">
+    <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+    <div id="unity-loading-bar">
+      <div id="unity-progress-bar-empty"><div id="unity-progress-bar-full"></div></div>
+    </div>
+    <div id="unity-warning"></div>
+  </div>
 
-<script src="jszip.js"></script>
 <script>
-const loadingText = document.querySelector("#loading-text");
-const CACHE_NAME = "hksilksongcache-truffled-v1";
+(() => {
+  const ROOT = "https://truffled.lol/games/silk/";
+  const loadingText = document.getElementById("loading-text");
+  const canvas = document.getElementById("unity-canvas");
+  const loadingBar = document.getElementById("unity-loading-bar");
+  const progressBarFull = document.getElementById("unity-progress-bar-full");
+  const warningBanner = document.getElementById("unity-warning");
+  const CACHE_NAME = "hksilksongcache-truffled-v2";
+  const originalFetch = window.fetch.bind(window);
 
-const originalFetch = window.fetch;
-window.fetch = async function(resource, options) {
-    let url = typeof resource === "string" ? resource : resource.url;
-    let cleanPath = url.split("/").pop();
-    const cache = await caches.open(CACHE_NAME);
-    const cachedResponse = await cache.match(cleanPath);
-    if (cachedResponse) return cachedResponse;
-    return originalFetch(resource, options);
-};
+  function setStatus(s) { loadingText.textContent = s; }
+  function unityShowBanner(msg, type) {
+    const div = document.createElement("div");
+    div.innerHTML = msg;
+    div.style.padding = "10px";
+    div.style.background = type === "error" ? "#b00020" : "#d8b400";
+    div.style.color = "white";
+    warningBanner.appendChild(div);
+  }
 
-async function isCached() {
-    const cache = await caches.open(CACHE_NAME);
-    const done = await cache.match("CACHE_COMPLETE");
-    return !!done;
-}
+  async function getCache() {
+    if (!window.isSecureContext || !window.caches) {
+      throw new Error("This build must be opened from HTTPS (for example GitHub Pages), not by double-clicking index.html.");
+    }
+    return caches.open(CACHE_NAME);
+  }
 
-async function cleanupOldCaches() {
-    const cacheNames = await caches.keys();
-    await Promise.all(cacheNames.map(name => {
-        if (name !== CACHE_NAME && name.includes("hksilksong")) {
-            console.log("Deleting old cache:", name);
-            return caches.delete(name);
-        }
-    }));
-}
+  const originalFetchForAssets = originalFetch;
+  window.fetch = async function(resource, options) {
+    const url = typeof resource === "string" ? resource : resource.url;
+    try {
+      const cache = await getCache();
+      const key = url.split("?")[0];
+      const cached = await cache.match(key);
+      if (cached) return cached;
+    } catch (_) {}
+    return originalFetchForAssets(resource, options);
+  };
 
-async function unzipAndStore(zipBlob) {
-    if (!zipBlob) throw new Error("ZIP is missing");
-    loadingText.textContent = "EXTRACTING ASSETS...";
+  async function isCached() {
+    const cache = await getCache();
+    return !!(await cache.match(ROOT + "CACHE_COMPLETE"));
+  }
+
+  async function unzipAndStore(zipBlob) {
+    if (!window.JSZip) throw new Error("JSZip failed to load.");
+    setStatus("EXTRACTING ASSETS...");
     const zip = await JSZip.loadAsync(zipBlob);
     const files = Object.values(zip.files).filter(f => !f.dir);
-    const total = files.length;
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await getCache();
     let processed = 0;
     const batchSize = 10;
 
     for (let i = 0; i < files.length; i += batchSize) {
-        const batch = files.slice(i, i + batchSize);
-        await Promise.all(batch.map(async file => {
-            try {
-                const blob = await file.async("blob");
-                await cache.put(file.name, new Response(blob));
-            } catch (e) {
-                console.error("Failed:", file.name, e);
-            }
-            processed++;
-            loadingText.textContent =
-                `EXTRACTING ASSETS... (${processed}/${total})`;
-        }));
-        await new Promise(r => setTimeout(r, 0));
+      await Promise.all(files.slice(i, i + batchSize).map(async file => {
+        const blob = await file.async("blob");
+        await cache.put(ROOT + file.name, new Response(blob));
+        processed++;
+        setStatus(`EXTRACTING ASSETS... (${processed}/${files.length})`);
+      }));
+      await new Promise(r => setTimeout(r, 0));
     }
+    await cache.put(ROOT + "CACHE_COMPLETE", new Response("ok"));
+  }
 
-    await cache.put("CACHE_COMPLETE", new Response("ok"));
-    console.log("Cache complete");
-}
-
-let loadedBytes = 0;
-async function fetchWithProgress(url) {
-    const response = await originalFetch(url);
-    if (!response.ok) throw new Error("Failed to fetch: " + url);
-
+  let loadedBytes = 0;
+  async function fetchWithProgress(url) {
+    const response = await originalFetchForAssets(url);
+    if (!response.ok) throw new Error(`Failed to fetch ${url} (HTTP ${response.status})`);
+    if (!response.body) return response.arrayBuffer();
     const reader = response.body.getReader();
-    let chunks = [];
+    const chunks = [];
     let received = 0;
-
     while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        received += value.length;
-        loadedBytes += value.length;
-        chunks.push(value);
-
-        let mbDone = (loadedBytes / (1024 * 1024)).toFixed(2);
-        let mbTotal = "1986.64";
-        loadingText.textContent =
-            `DOWNLOADING ASSETS... (${mbDone} MB / ${mbTotal} MB)`;
+      const {done, value} = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      loadedBytes += value.length;
+      setStatus(`DOWNLOADING ASSETS... (${(loadedBytes / 1048576).toFixed(2)} MB)`);
     }
-
-    let fullBuffer = new Uint8Array(received);
+    const buffer = new Uint8Array(received);
     let offset = 0;
-    for (let chunk of chunks) {
-        fullBuffer.set(chunk, offset);
-        offset += chunk.length;
-    }
-    return fullBuffer.buffer;
-}
+    for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
+    return buffer.buffer;
+  }
 
-async function mergeFiles(parts) {
-    console.log("Downloading parts:", parts.length);
-    const buffers = await Promise.all(parts.map(part => fetchWithProgress(part)));
+  async function mergeFiles(parts) {
+    const buffers = await Promise.all(parts.map(fetchWithProgress));
     return new Blob(buffers);
-}
+  }
 
-function getParts(file, start, end) {
-    let parts = [];
-    for (let i = start; i <= end; i++) {
-        parts.push(file + ".part" + i);
-    }
+  function getParts(file, start, end) {
+    const parts = [];
+    for (let i = start; i <= end; i++) parts.push(ROOT + file + ".part" + i);
     return parts;
-}
+  }
 
-(async () => {
+  async function start() {
     try {
-        await cleanupOldCaches();
+      if (!(await isCached())) {
+        setStatus("DOWNLOADING ASSETS... FIRST LOAD CAN TAKE A WHILE.");
+        const zip = await mergeFiles(getParts("StreamingAssets/aa/WebGL.zip", 1, 100));
+        await unzipAndStore(zip);
+      } else {
+        setStatus("LOADING FROM CACHE...");
+      }
 
-        if (!(await isCached())) {
-            loadingText.textContent = "DOWNLOADING ASSETS...";
-            const webglzip = await mergeFiles(
-                getParts("StreamingAssets/aa/WebGL.zip", 1, 100)
-            );
-            await unzipAndStore(webglzip);
-        } else {
-            loadingText.textContent = "LOADING FROM CACHE...";
-        }
+      loadingBar.style.display = "block";
+      setStatus("STARTING UNITY...");
 
-        const canvas = document.querySelector("#unity-canvas");
-        const loadingBar = document.querySelector("#unity-loading-bar");
-        const progressBarFull =
-            document.querySelector("#unity-progress-bar-full");
-        const warningBanner = document.querySelector("#unity-warning");
-
-        function unityShowBanner(msg, type) {
-            function update() {
-                warningBanner.style.display =
-                    warningBanner.children.length ? "block" : "none";
-            }
-
-            let div = document.createElement("div");
-            div.innerHTML = msg;
-            warningBanner.appendChild(div);
-
-            if (type == "error") {
-                div.style = "background:red;padding:10px;";
-            } else if (type == "warning") {
-                div.style = "background:yellow;padding:10px;";
-                setTimeout(() => {
-                    if (div.parentNode === warningBanner)
-                        warningBanner.removeChild(div);
-                    update();
-                }, 5000);
-            }
-            update();
-        }
-
-        const buildUrl = "Build";
-        const config = {
-            dataUrl: buildUrl + "/w-pt.data.unityweb",
-            frameworkUrl: buildUrl + "/w-pt.framework.js.unityweb",
-            codeUrl: buildUrl + "/w-pt.wasm.unityweb",
-            streamingAssetsUrl: "StreamingAssets",
+      const script = document.createElement("script");
+      script.src = ROOT + "Build/w-pt.loader.js";
+      script.onload = async () => {
+        try {
+          await createUnityInstance(canvas, {
+            dataUrl: ROOT + "Build/w-pt.data.unityweb",
+            frameworkUrl: ROOT + "Build/w-pt.framework.js.unityweb",
+            codeUrl: ROOT + "Build/w-pt.wasm.unityweb",
+            streamingAssetsUrl: ROOT + "StreamingAssets",
             companyName: "EDUrocks Group, Truffled, GN-Math",
             productName: "Hollow Knight SilkSong",
             productVersion: "1.0",
             showBanner: unityShowBanner
-        };
-
-        loadingBar.style.display = "block";
-
-        const script = document.createElement("script");
-        script.src = "Build/w-pt.loader.js";
-
-        script.onload = () => {
-            createUnityInstance(canvas, config, progress => {
-                progressBarFull.style.width = (progress * 100) + "%";
-            })
-            .then(() => {
-                loadingBar.remove();
-                loadingText.remove();
-            })
-            .catch(alert);
-        };
-
-        script.onerror = () => {
-            loadingText.textContent =
-                "ERROR: Could not load the Truffled Unity loader.";
-        };
-
-        document.body.appendChild(script);
-    } catch (err) {
-        console.error(err);
-        loadingText.textContent = "ERROR: " + err.message;
+          }, progress => {
+            progressBarFull.style.width = (progress * 100) + "%";
+          });
+          loadingBar.remove();
+          loadingText.remove();
+        } catch (e) {
+          console.error(e);
+          setStatus("UNITY ERROR: " + (e && e.message ? e.message : e));
+        }
+      };
+      script.onerror = () => setStatus("ERROR: Could not load the Unity loader from Truffled.");
+      document.body.appendChild(script);
+    } catch (e) {
+      console.error(e);
+      setStatus("ERROR: " + (e && e.message ? e.message : e));
     }
+  }
+
+  start();
 })();
 </script>
 </body>
