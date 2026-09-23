@@ -15,7 +15,7 @@
     #unity-progress-bar-full { width: 0%; height: 100%; background: #fff; }
     #unity-warning { position: absolute; left: 0; right: 0; top: 0; z-index: 10; }
   </style>
-  <script src="https://truffled.lol/games/silk/jszip.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/webporting/hollow-knight-silksong@master/jszip.js"></script>
 </head>
 <body>
   <div id="loading-text">LOADING...</div>
@@ -29,13 +29,13 @@
 
 <script>
 (() => {
-  const ROOT = "https://truffled.lol/games/silk/";
+  const ROOT = "https://cdn.jsdelivr.net/gh/webporting/hollow-knight-silksong@master/";
   const loadingText = document.getElementById("loading-text");
   const canvas = document.getElementById("unity-canvas");
   const loadingBar = document.getElementById("unity-loading-bar");
   const progressBarFull = document.getElementById("unity-progress-bar-full");
   const warningBanner = document.getElementById("unity-warning");
-  const CACHE_NAME = "hksilksongcache-truffled-v2";
+  const CACHE_NAME = "hksilksongcache-webport-v3";
   const originalFetch = window.fetch.bind(window);
 
   function setStatus(s) { loadingText.textContent = s; }
